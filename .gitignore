@@ -3,3 +3,10 @@ CMakeFiles/
 CTestTestfile.cmake
 cmake_install.cmake
 compile_commands.json
+
+.vscode
+
+imgui.ini
+dpl-config.json
+
+*.root
