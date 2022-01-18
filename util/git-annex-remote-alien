@@ -1,0 +1,181 @@
+#!/bin/sh
+# git-annex external special remote program to access AliEn files stored 
+# on the ALICE part of the LHC grid.
+# Based on https://git-annex.branchable.com/special_remotes/external/
+#
+# Install in PATH as git-annex-remote-alien
+#
+# Copyright: licenced under the GNU GPL version 3 or higher.
+#    2013 Joey Hess
+#    2022 Tom Dietel
+
+set -e
+
+# This program speaks a line-based protocol on stdin and stdout.
+# When running any commands, their stdout should be redirected to stderr
+# (or /dev/null) to avoid messing up the protocol.
+runcmd () {
+	"$@" >&2
+}
+
+# Asks git-annex main process for some value, and stores it in RET
+ask () {
+	echo "$1" "$2"
+	read resp
+	# Tricky POSIX shell code to split first word of the resp,
+	# preserving all other whitespace
+	case "${resp%% *}" in
+		VALUE)
+			RET="$(echo "$resp" | sed 's/^VALUE //')"
+		;;
+		*)
+			RET=""
+		;;
+	esac
+}
+
+whereis () {
+	local url="$1"
+	alien_whereis "$url" | awk '/SE =>/{print $3}'
+}
+
+checkurl () {
+	local url="$1"
+	# Check if the file exists on a SE that does not contain 'TAPE' or 'CTA'
+	# (CERN tape archive)
+	if alien_whereis "$url" | awk '/SE =>/{print $3}' | egrep -vq "(TAPE|CTA)"
+	then
+		# If the file exists on a (presumable) disk SE, we return the size
+		alien_stat "$url" | awk '/^Size:/ {print "CHECKURL-CONTENTS " $2}'
+	else
+		echo CHECKURL-FAILURE "${url}"
+	fi
+	return	
+}
+
+
+docheckpresent () {
+	local key="$1"
+	local loc="$2"
+
+	if [ -e "$loc" ]; then
+		echo CHECKPRESENT-SUCCESS "$key"
+	else
+		if [ -d "$mydirectory" ]; then
+			echo CHECKPRESENT-FAILURE "$key"
+		else
+			# When the directory does not exist,
+			# the remote is not available.
+			# (A network remote would similarly
+			# fail with CHECKPRESENT-UNKNOWN
+			# if it couldn't be contacted).
+			echo CHECKPRESENT-UNKNOWN "$key" "this remote is not currently available"
+		fi
+	fi
+}
+
+# This has to come first, to get the protocol started.
+echo VERSION 1
+
+while read line; do
+	set -- $line
+	# runcmd echo "CMD: $line"
+	case "$1" in
+		LISTCONFIGS)
+			# One CONFIG line for each setting that we GETCONFIG
+			# later.
+			# echo CONFIG directory store data here
+			echo CONFIGEND
+		;;
+		INITREMOTE)
+			# Do anything necessary to create resources
+			# used by the remote. Try to be idempotent.
+			# 
+			# (Note that this is not run every time, only when
+			# git annex initremote or git annex enableremote is
+			# run.)
+
+			# Check for a valid token to access AliEn
+	        if runcmd alien-token-info ; then
+		        echo INITREMOTE-SUCCESS
+	        else
+		        echo INITREMOTE-FAILURE "Log into AliEn with 'alien-token-init'."
+	        fi
+		;;
+		PREPARE)
+	        if alien-token-info > /dev/null ; then
+		        echo PREPARE-SUCCESS
+	        else
+		        echo PREPARE-FAILURE "Log into AliEn with 'alien-token-init'."
+	        fi
+		;;
+
+		CLAIMURL)
+			url="$2"
+			if echo "${url}" | egrep -q "^alien:"; then
+				echo CLAIMURL-SUCCESS
+			else
+				echo CLAIMURL-FAILURE
+			fi
+		;;
+		CHECKURL)
+			url="$2"
+			checkurl "${url}"
+		;;
+
+		TRANSFER)
+			op="$2"
+			key="$3"
+			shift 3
+			file="$@"
+			case "$op" in
+				STORE)
+					# Store the file to a location based on the key.
+					echo UNSUPPORTED-REQUEST
+				;;
+				RETRIEVE)
+					# Retrieve from a location based on
+					# the key, outputting to the file.
+					ask GETURLS "$key" alien:
+					if runcmd alien_cp "$RET" "file:$file"; then
+						echo TRANSFER-SUCCESS RETRIEVE "$key"
+					else
+						echo TRANSFER-FAILURE RETRIEVE "$key"
+					fi
+				;;
+			esac
+		;;
+		CHECKPRESENT)
+			# TODO: This should check if the file is present and readable
+			key="$2"
+			#calclocation "$key"
+			#docheckpresent "$key" "$LOC"
+			echo UNSUPPORTED-REQUEST
+		;;
+		REMOVE)
+			# key="$2"
+			# calclocation "$key"
+			# doremove "$key" "$LOC"
+			echo UNSUPPORTED-REQUEST
+		;;
+		# The requests listed above are all the ones
+		# that are required to be supported, so it's fine
+		# to respond to any others with UNSUPPORTED-REQUEST.
+
+
+		# This is optional, only provided as an example.
+		GETINFO)
+			echo INFOFIELD "repository location"
+			echo INFOVALUE "$mydirectory"
+			echo INFOFIELD "login"
+			echo INFOVALUE "$MYLOGIN"
+			echo INFOEND
+		;;
+
+		*)
+			echo UNSUPPORTED-REQUEST
+		;;
+	esac	
+done
+
+# XXX anything that needs to be done at shutdown can be done here
