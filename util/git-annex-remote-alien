@@ -1,7 +1,10 @@
 #!/bin/sh
 # git-annex external special remote program to access AliEn files stored 
 # on the ALICE part of the LHC grid.
-# Based on https://git-annex.branchable.com/special_remotes/external/
+# Based on an official example remote:
+#   https://git-annex.branchable.com/special_remotes/external/
+# With some additional inspiration from the IPFS remote:
+#   https://git-annex.branchable.com/special_remotes/external/git-annex-remote-ipfs
 #
 # Install in PATH as git-annex-remote-alien
 #
@@ -46,6 +49,7 @@ checkurl () {
 	if alien_whereis "$url" | awk '/SE =>/{print $3}' | egrep -vq "(TAPE|CTA)"
 	then
 		# If the file exists on a (presumable) disk SE, we return the size
+		# echo "SETURIPRESENT" "$key" "$url"
 		alien_stat "$url" | awk '/^Size:/ {print "CHECKURL-CONTENTS " $2}'
 	else
 		echo CHECKURL-FAILURE "${url}"
@@ -79,7 +83,7 @@ echo VERSION 1
 
 while read line; do
 	set -- $line
-	# runcmd echo "CMD: $line"
+	runcmd echo "CMD: $line"
 	case "$1" in
 		LISTCONFIGS)
 			# One CONFIG line for each setting that we GETCONFIG
@@ -138,6 +142,7 @@ while read line; do
 					# the key, outputting to the file.
 					ask GETURLS "$key" alien:
 					if runcmd alien_cp "$RET" "file:$file"; then
+						echo "SETURIPRESENT" "$key" "$url"
 						echo TRANSFER-SUCCESS RETRIEVE "$key"
 					else
 						echo TRANSFER-FAILURE RETRIEVE "$key"
